@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class ZINB_Loss(nn.Module):
     def __init__(self):
@@ -33,3 +34,19 @@ class KLD_Loss(nn.Module):
 
     def forward(self, target, pred):
         return torch.mean(torch.sum(target*torch.log(target/(pred+1e-6)), dim=-1))
+    
+
+class MeanAct(nn.Module):
+    def __init__(self):
+        super(MeanAct, self).__init__()
+
+    def forward(self, x):
+        return torch.clamp(torch.exp(x), min=1e-5, max=1e6)
+
+
+class DispAct(nn.Module):
+    def __init__(self):
+        super(DispAct, self).__init__()
+
+    def forward(self, x):
+        return torch.clamp(F.softplus(x), min=1e-4, max=1e4)
