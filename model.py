@@ -12,7 +12,7 @@ import math, os
 from sklearn import metrics
 
 
-class Autoencoder(nn.module):
+class Autoencoder(nn.Module):
     def __init__(self, input_dim):
         super(Autoencoder, self).__init__()
 
@@ -41,6 +41,7 @@ class Autoencoder(nn.module):
         self.out_dropout = nn.Sequential(nn.Linear(self.decoder[-1], input_dim), nn.Sigmoid())
 
         self.zinb_loss = ZINB_Loss().to(self.device)
+        self.cluster_loss = KLD_Loss().to(self.device)
         self.to("cuda")
 
 
