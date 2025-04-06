@@ -11,38 +11,43 @@ from sklearn.cluster import KMeans
 import math, os
 from sklearn import metrics
 
+def buildNetwork(layers):
+    net = []
+    for i in range(1, len(layers)):
+        net.append(nn.Linear(layers[i-1], layers[i]))
+        net.append(nn.ReLU())
+    return nn.Sequential(*net)
 
 class Autoencoder(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, z_dim, encoder_layers=[], decoder_layers=[], device="cuda"):
         super(Autoencoder, self).__init__()
 
-        self.device = "cuda"
+        torch.set_default_dtype(torch.float64)
+        self.device = device
         
         # Encoder
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 256),   
-            nn.ReLU(),
-            nn.Linear(256, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32)
-        )
+        self.encoder = buildNetwork([input_dim] + encoder_layers)
+
+        # Latent
+        self.z_dim = z_dim
+        self.latent_space = nn.Linear(encoder_layers[-1], z_dim)
         
         # Decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(32, 64),   
-            nn.ReLU(),
-            nn.Linear(64, 256),
-            nn.ReLU()
-        )
+        self.decoder = buildNetwork([z_dim] + decoder_layers)
+
+        
 
         # output layers
-        self.out_mean = nn.Sequential(nn.Linear(self.decoder[-1], input_dim), MeanAct())
-        self.out_disp = nn.Sequential(nn.Linear(self.decoder[-1], input_dim), DispAct())
-        self.out_dropout = nn.Sequential(nn.Linear(self.decoder[-1], input_dim), nn.Sigmoid())
+        self.out_mean = nn.Sequential(nn.Linear(decoder_layers[-1], input_dim), MeanAct())
+        self.out_disp = nn.Sequential(nn.Linear(decoder_layers[-1], input_dim), DispAct())
+        self.out_dropout = nn.Sequential(nn.Linear(decoder_layers[-1], input_dim), nn.Sigmoid())
 
+        self.alpha = 1.
+        self.sigma = 2.5
+        self.gamma = 1.
         self.zinb_loss = ZINB_Loss().to(self.device)
         self.cluster_loss = KLD_Loss().to(self.device)
-        self.to("cuda")
+        self.to(device)
 
 
 
@@ -73,19 +78,21 @@ class Autoencoder(nn.Module):
 
 
     def forward(self, x, cluster=False):
-        latent_space = self.encoder(x + torch.randn_like(x))
-        output = self.decoder(latent_space)
+        h = self.encoder(x + torch.randn_like(x))
+        z = self.latent_space(h)
+        output = self.decoder(z)
 
         mean = self.out_mean(output)
         disp = self.out_disp(output)
         dropout = self.out_dropout(output)
 
-        latent_space = self.encoder(x)
+        h0 = self.encoder(x)
+        z0 = self.latent_space(h0)
         q = 0
         if cluster:
-            q = self.soft_assign(latent_space)
+            q = self.soft_assign(z0)
 
-        return latent_space, q, mean, disp, dropout
+        return z0, q, mean, disp, dropout
     
     def pretrain(self, X, X_raw, size_factor, batch_size=256, lr=0.001, epochs=400, ae_save=True, ae_weights='AE_weights.pth.tar'):
         self.train()
@@ -99,13 +106,17 @@ class Autoencoder(nn.Module):
                 x_tensor = Variable(x_batch).to(self.device)
                 x_raw_tensor = Variable(x_raw_batch).to(self.device)
                 sf_tensor = Variable(sf_batch).to(self.device)
-                _, mean_tensor, disp_tensor, pi_tensor = self.forward(x_tensor)
+                _, _, mean_tensor, disp_tensor, pi_tensor = self.forward(x_tensor)
                 loss = self.zinb_loss(x=x_raw_tensor, mean=mean_tensor, disp=disp_tensor, pi=pi_tensor, scale_factor=sf_tensor)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 loss_val += loss.item() * len(x_batch)
             print('Pretrain epoch %3d, ZINB loss: %.8f' % (epoch+1, loss_val/X.shape[0]))
+
+        if ae_save:
+            torch.save({'ae_state_dict': self.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict()}, ae_weights)            
 
 
 
@@ -134,14 +145,14 @@ class Autoencoder(nn.Module):
             self.y_pred_last = self.y_pred
         if y is not None:
 #            acc = np.round(cluster_acc(y, self.y_pred), 5)
-            nmi = np.round(metrics.normalized_mutual_info_score(y, self.y_pred), 5)
+            ami = np.round(metrics.adjusted_mutual_info_score(y, self.y_pred), 5)
             ari = np.round(metrics.adjusted_rand_score(y, self.y_pred), 5)
-            print('Initializing k-means: NMI= %.4f, ARI= %.4f' % (nmi, ari))
+            print('Initializing k-means: AMI= %.4f, ARI= %.4f' % (ami, ari))
 
         num = X.shape[0]
         num_batch = int(math.ceil(1.0*X.shape[0]/batch_size))
 
-        final_acc, final_nmi, final_ari, final_epoch = 0, 0, 0, 0
+        final_ami, final_ari, final_epoch = 0, 0, 0
 
 
         for epoch in range(num_epochs):
@@ -156,9 +167,9 @@ class Autoencoder(nn.Module):
 
                 if y is not None:
 #                    final_acc = acc = np.round(cluster_acc(y, self.y_pred), 5)
-                    final_nmi = nmi = np.round(metrics.normalized_mutual_info_score(y, self.y_pred), 5)
+                    final_ami = ami = np.round(metrics.adjusted_mutual_info_score(y, self.y_pred), 5)
                     final_epoch = ari = np.round(metrics.adjusted_rand_score(y, self.y_pred), 5)
-                    print('Clustering   %d: NMI= %.4f, ARI= %.4f' % (epoch+1, nmi, ari))
+                    print('Clustering   %d: AMI= %.4f, ARI= %.4f' % (epoch+1, ami, ari))
 
                 # # save current model
                 # if (epoch>0 and delta_label < tol) or epoch%10 == 0:
@@ -194,7 +205,7 @@ class Autoencoder(nn.Module):
                 sfinputs = Variable(sfbatch).to(self.device)
                 target = Variable(pbatch).to(self.device)
 
-                zbatch, qbatch, meanbatch, dispbatch, pibatch = self.forward(inputs)
+                zbatch, qbatch, meanbatch, dispbatch, pibatch = self.forward(inputs, cluster=True)
 
                 cluster_loss = self.cluster_loss(target, qbatch)
                 recon_loss = self.zinb_loss(rawinputs, meanbatch, dispbatch, pibatch, sfinputs)
@@ -209,4 +220,4 @@ class Autoencoder(nn.Module):
             print("Epoch %3d: Total: %.8f Clustering Loss: %.8f ZINB Loss: %.8f" % (
                 epoch + 1, train_loss / num, cluster_loss_val / num, recon_loss_val / num))
 
-        return self.y_pred, final_acc, final_nmi, final_ari, final_epoch
+        return self.y_pred, final_ami, final_ari, final_epoch

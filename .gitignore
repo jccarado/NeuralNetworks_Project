@@ -1,2 +1,5 @@
 data*
 __pycache__*
+AE_weights.pth.tar
+nn_env*
+.ipynb_checkpoints*
