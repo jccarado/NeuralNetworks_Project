@@ -3,3 +3,4 @@ __pycache__*
 AE_weights.pth.tar
 nn_env*
 .ipynb_checkpoints*
+optuna/*.h5ad
