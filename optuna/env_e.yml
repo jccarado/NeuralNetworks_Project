@@ -1,0 +1,28 @@
+name: nn_project_env_e
+channels:
+  # - pytorch-nightly
+  - bioconda
+  - conda-forge
+dependencies:
+  # - pytorch
+  - jupyter
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - umap-learn
+  - anndata
+  - ipykernel
+  - ipywidgets
+  - python-igraph
+  - tqdm
+  - optuna
+  - pip
+  - pip:
+    - scanpy
+
+# Activate environment (to not pollute base environment), then
+# Run ONE pf the two commands to install pytorch for RTX 5000 series
+
+# pip3 install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128
+# pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
